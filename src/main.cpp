@@ -13,9 +13,12 @@
 #include <SoftwareSerial.h>
 #include <PubSubClient.h>
 
+#define DEBUG(X...) do{if(Serial)Serial.println(X);}while(0)
+#define DEBUGCHAR(X...) do{if(Serial)Serial.print(X);}while(0)
+
 void publishTopicValue(char* strString, char* value);
 
-SoftwareSerial swSer(0,4);
+SoftwareSerial swSer(5,4);
 
 
 //char id[5] = {'o','f','f','\0'};
@@ -59,8 +62,8 @@ boolean justChanged = 0;
 
 void callback(char* topic, byte* payload,unsigned int length) {
 	int topiclen = strlen(topic);
-	Serial.print("Have message from topic ");
-	Serial.println(topic);
+	DEBUGCHAR("Have message from topic ");
+	DEBUG(topic);
     // If there has been no MQTT message received for a bit...
     if((millis() - previousMQTTCommand > waitForCommand) && (changeWaiting == 0)) {
       previousMQTTCommand = millis();
@@ -73,7 +76,7 @@ void callback(char* topic, byte* payload,unsigned int length) {
     if (topic[topiclen - 2] == '/'){
       if (topic[topiclen - 1] == 'Z'){
         changeWaiting = 1;
-        //Serial.println("Zones");
+        //DEBUG("Zones");
         if (payload[3] == '1'){
           bitWrite(charBuffNew[5],3, 1);
         }else{
@@ -94,7 +97,7 @@ void callback(char* topic, byte* payload,unsigned int length) {
         }else{
           bitWrite(charBuffNew[5],6, 0);
         }
-        //Serial.println(charBuffNew[6],BIN);
+        //DEBUG(charBuffNew[6],BIN);
       }
       if (topic[topiclen - 1] == 'M'){
         changeWaiting = 1;
@@ -150,7 +153,7 @@ void callback(char* topic, byte* payload,unsigned int length) {
       }
       if (topic[topiclen - 1] == 'P'){
         changeWaiting = 1;
-        //Serial.println("Power");
+        //DEBUG("Power");
         if (payload[0] == '1'){
           bitWrite(charBuffNew[1],1,1);
         }else{
@@ -165,8 +168,8 @@ byte calcChecksum(){
   unsigned int checksum;
   checksum2 = 0;
   for (int i = 0; i < 12; i++){
-    //Serial.print(charBuff[i]);
-    //Serial.print(".");
+    //DEBUGCHAR(charBuff[i]);
+    //DEBUGCHAR(".");
     checksum2 = checksum2 + charBuffNew[i];
   }
 
@@ -195,13 +198,13 @@ void sendConfig(){
   charBuffNew[12] = calcChecksum();
 
   //Send it of to the AC
-  Serial.println("Sending to AC");
+  DEBUG("Sending to AC");
   
   for (int i=0; i < 12; i++){
-    Serial.print(charBuffNew[i],DEC);
-    Serial.print(",");
+    DEBUGCHAR(charBuffNew[i],DEC);
+    DEBUGCHAR(",");
   }
-  Serial.println("");  
+  DEBUG("");  
   swSer.write(charBuffNew,13);
   
   // Make sure we are not listening to the data we sent...
@@ -214,38 +217,59 @@ char * subPath;
 // = {'h', 'a', '/', 'm', 'o', 'd', '/', '5', '5', '5', '7', '/', '#','\0'};
 byte topicNumber = 12;
 
+#define SLOW 250
+#define MEDIUM 100
+#define FAST 50
+
+#define sleep(X) delay(X)
+#define ON 1
+#define OFF 0
+
+void blink(int speed, int count) {
+	pinMode(16, OUTPUT);
+	for(; count > 0; count--) {
+		digitalWrite(16, ON);
+		sleep(speed);
+		digitalWrite(16, OFF);
+		sleep(speed);	
+	}
+	digitalWrite(16, ON);
+}
+
 void mqttConnect() {
   if (!MQTTClient.connected()) {
+	  blink(MEDIUM, 2);
 	  int maxlen = strlen(PREFIX) + strlen(id) + 3;
 	  char * subPath = (char *)malloc(maxlen);
-	  if(subPath == NULL) Serial.println("failed to allocate memory.");
+	  if(subPath == NULL) DEBUG("failed to allocate memory.");
 	  snprintf(subPath, maxlen, "%s%s/#\0", PREFIX, id);
-    Serial.println("Connecting to broker");
+    DEBUG("Connecting to broker");
     if (MQTTClient.connect(id)){
-      Serial.print("Subscribing to: ");
-      Serial.println(subPath);
+      DEBUGCHAR("Subscribing to: ");
+      DEBUG(subPath);
       MQTTClient.subscribe(subPath);
-      Serial.println("Subscribed!");
+      DEBUG("Subscribed!");
+	  blink(FAST, 2);
     } else {
-      Serial.println("Failed to connect!");
+      DEBUG("Failed to connect!");
     }
   }
 }
 
 
 void publishTopicValue(char* strString, char* value) {
-  Serial.print("S:");
-  Serial.print(strString);
-  Serial.print("/");
-  Serial.println(value);
+  DEBUGCHAR("S:");
+  DEBUGCHAR(strString);
+  DEBUGCHAR("/");
+  DEBUG(value);
   MQTTClient.publish(strString, value);
 }
 
 void publishTopicValueLen(char* strString, char* value, int len) {
-  Serial.print("S:");
-  Serial.print(strString);
-  Serial.print("/");
-  Serial.println(value);
+  DEBUGCHAR("S:");
+  DEBUGCHAR(strString);
+  DEBUGCHAR("/");
+  DEBUG(value);
   MQTTClient.beginPublish(strString, len, 0);
   MQTTClient.write((byte *)value, len);
   MQTTClient.endPublish();
@@ -254,7 +278,7 @@ void publishTopicValueLen(char* strString, char* value, int len) {
 char * make_topic(char * topic_type) {
     int maxlen = strlen(PREFIX) + strlen(id) + strlen(topic_type) + 3;
   char * subPath = (char *)malloc(maxlen);
-  if(subPath == NULL) Serial.println("failed to allocate memory.");
+  if(subPath == NULL) DEBUG("failed to allocate memory.");
   
   snprintf(subPath, maxlen, "%s%s/%s\0", PREFIX, id, topic_type);
   return subPath;
@@ -268,6 +292,7 @@ void publishSettings(){
   publishTopicValueLen(topic, (char*)charBuff, 13);
 
   free(topic);  
+  if(charBuff[0] != 168) return;
   //Power
   powerByte = bitRead(charBuff[1],1);
 
@@ -339,9 +364,11 @@ void publishSettings(){
 //***********************************************
 
 void setup() {
+	blink(MEDIUM, 10);
   // put your setup code here, to run once:
-  Serial.begin(115200);
-  Serial.println();
+	if(Serial)
+		Serial.begin(115200);
+  DEBUG();
 
 //Set up software serial at 104 baud to talk to AC
   swSer.begin(104);
@@ -362,39 +389,41 @@ void setup() {
   //here  "AutoConnectAP" with password "password"
   //and goes into a blocking loop awaiting configuration
   if (!wifiManager.autoConnect()) {
-    Serial.println("WifiManager: failed to connect, we should reset as see if it connects");
+    DEBUG("WifiManager: failed to connect, we should reset as see if it connects");
     delay(3000);
     ESP.reset();
     delay(5000);
   }
-
+  
+  blink(MEDIUM, 5);
+  
   ArduinoOTA.onStart([]() {
-    Serial.println("OTA Start");
+    DEBUG("OTA Start");
   });
   ArduinoOTA.onEnd([]() {
-    Serial.println("\nOTA End");
+    DEBUG("\nOTA End");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     Serial.printf("OTA: Progress: %u%%\r", (progress / (total / 100)));
   });
   ArduinoOTA.onError([](ota_error_t error) {
     Serial.printf("OTA Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) Serial.println("OTA: Auth Failed");
-    else if (error == OTA_BEGIN_ERROR) Serial.println("OTA: Begin Failed");
-    else if (error == OTA_CONNECT_ERROR) Serial.println("OTA: Connect Failed");
-    else if (error == OTA_RECEIVE_ERROR) Serial.println("OTA: Receive Failed");
-    else if (error == OTA_END_ERROR) Serial.println("OTA: End Failed");
+    if (error == OTA_AUTH_ERROR) DEBUG("OTA: Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) DEBUG("OTA: Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) DEBUG("OTA: Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) DEBUG("OTA: Receive Failed");
+    else if (error == OTA_END_ERROR) DEBUG("OTA: End Failed");
   });
 
   ArduinoOTA.setPassword((const char *)"123");
 
   //if you get here you have connected to the WiFi
-  Serial.println("connected...yay :)");
+  DEBUG("connected...yay :)");
 
   ArduinoOTA.begin();
 
-  Serial.println("local ip");
-  Serial.println(WiFi.localIP());
+  DEBUG("local ip");
+  DEBUG(WiFi.localIP());
 }
 
 
@@ -430,21 +459,21 @@ void loop() {
      lastCharTime=millis();
      charBuff[charCount] = swSer.read();
      charCount++;
-//	   Serial.print("Have bytes. ");
-//	   Serial.println(charCount);
+//	   DEBUGCHAR("Have bytes. ");
+//	   DEBUG(charCount);
      if (charCount == 13){
-       Serial.print("R: ");
+       DEBUGCHAR("R: ");
        for (int i=0; i < 12; i++){
-         Serial.print(charBuff[i],DEC);
-         Serial.print(",");
+         DEBUGCHAR(charBuff[i],DEC);
+         DEBUGCHAR(",");
        }
-       Serial.println(charBuff[12],DEC);
+       DEBUG(charBuff[12],DEC);
        charCount = 0;
 
-//       if (charBuff[0] == 168){ // && charBuff[12] != lastChecksum){  //Only publish data back to MQTT from the Master controller.
+	         // if (charBuff[0] == 168){ // && charBuff[12] != lastChecksum){  //Only publish data back to MQTT from the Master controller.
          lastRx = millis(); //Track when we received the last 168 (master) packet
          if (changeWaiting == 0) publishSettings(); // If there is nothing pending FROM MQTT, Send the data off to MQTT
-//       }
+		 // }
      }
   }
 
