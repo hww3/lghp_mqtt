@@ -40,6 +40,7 @@ unsigned int lastChecksum = 0;
 byte powerByte = 0;
 byte fanByte = 0;
 byte modeByte = 0;
+byte plasmaByte = 0;
 byte tempByte = 0;
 byte zoneByte = 0; 
 
@@ -57,6 +58,9 @@ boolean justChanged = 0;
 //      FUNCTIONS
 
 void callback(char* topic, byte* payload,unsigned int length) {
+	int topiclen = strlen(topic);
+	Serial.print("Have message from topic ");
+	Serial.println(topic);
     // If there has been no MQTT message received for a bit...
     if((millis() - previousMQTTCommand > waitForCommand) && (changeWaiting == 0)) {
       previousMQTTCommand = millis();
@@ -66,8 +70,8 @@ void callback(char* topic, byte* payload,unsigned int length) {
       }
     }
   
-    if (topic[11] == '/'){
-      if (topic[12] == 'Z'){
+    if (topic[topiclen - 2] == '/'){
+      if (topic[topiclen - 1] == 'Z'){
         changeWaiting = 1;
         //Serial.println("Zones");
         if (payload[3] == '1'){
@@ -92,7 +96,7 @@ void callback(char* topic, byte* payload,unsigned int length) {
         }
         //Serial.println(charBuffNew[6],BIN);
       }
-      if (topic[12] == 'M'){
+      if (topic[topiclen - 1] == 'M'){
         changeWaiting = 1;
         if (payload[0] == '0'){  //Cooling
           bitWrite(charBuffNew[1], 2, 0);
@@ -120,7 +124,7 @@ void callback(char* topic, byte* payload,unsigned int length) {
           bitWrite(charBuffNew[1], 4, 1);
         }
       }
-      if (topic[12] == 'T'){
+      if (topic[topiclen - 1] == 'T'){
         changeWaiting = 1;
         char tmpChar[3] = {payload[0],payload[1], '\0'};  // Convert it to a null terminated string.
         unsigned int tempval = atoi(tmpChar)-15;  // Take off the offset of 15 Degrees.
@@ -129,7 +133,7 @@ void callback(char* topic, byte* payload,unsigned int length) {
         bitWrite(charBuffNew[6], 2, bitRead(tempval, 2));
         bitWrite(charBuffNew[6], 3, bitRead(tempval, 3));
       }
-      if (topic[12] == 'F'){
+      if (topic[topiclen - 1] == 'F'){
         changeWaiting = 1;
         if (payload[0] == '0'){  //Low
           bitWrite(charBuffNew[1],5,0);
@@ -144,7 +148,7 @@ void callback(char* topic, byte* payload,unsigned int length) {
           bitWrite(charBuffNew[1],6,1);
         }
       }
-      if (topic[12] == 'P'){
+      if (topic[topiclen - 1] == 'P'){
         changeWaiting = 1;
         //Serial.println("Power");
         if (payload[0] == '1'){
@@ -192,6 +196,12 @@ void sendConfig(){
 
   //Send it of to the AC
   Serial.println("Sending to AC");
+  
+  for (int i=0; i < 12; i++){
+    Serial.print(charBuffNew[i],DEC);
+    Serial.print(",");
+  }
+  Serial.println("");  
   swSer.write(charBuffNew,13);
   
   // Make sure we are not listening to the data we sent...
@@ -212,7 +222,7 @@ void mqttConnect() {
 	  snprintf(subPath, maxlen, "%s%s/#\0", PREFIX, id);
     Serial.println("Connecting to broker");
     if (MQTTClient.connect(id)){
-      Serial.print("Subscribing to :");
+      Serial.print("Subscribing to: ");
       Serial.println(subPath);
       MQTTClient.subscribe(subPath);
       Serial.println("Subscribed!");
@@ -241,13 +251,23 @@ void publishTopicValueLen(char* strString, char* value, int len) {
   MQTTClient.endPublish();
 }
 
+char * make_topic(char * topic_type) {
+    int maxlen = strlen(PREFIX) + strlen(id) + strlen(topic_type) + 3;
+  char * subPath = (char *)malloc(maxlen);
+  if(subPath == NULL) Serial.println("failed to allocate memory.");
+  
+  snprintf(subPath, maxlen, "%s%s/%s\0", PREFIX, id, topic_type);
+  return subPath;
+}
 
 void publishSettings(){
+    char * topic = make_topic("RAW");
+
   justChanged = 1;
-  
-  char strPath0[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'R', 'A', 'W','\0'};  // Power State
-  publishTopicValueLen(strPath0, (char*)charBuff, 13);
-  
+
+  publishTopicValueLen(topic, (char*)charBuff, 13);
+
+  free(topic);  
   //Power
   powerByte = bitRead(charBuff[1],1);
 
@@ -259,6 +279,9 @@ void publishSettings(){
   bitWrite(modeByte,0, bitRead(charBuff[1],2));
   bitWrite(modeByte,1, bitRead(charBuff[1],3));
   bitWrite(modeByte,2, bitRead(charBuff[1],4));
+
+  //Mode 0 = Off, 1 = On
+  plasmaByte = (charBuff[2] & 0x04)? 1:0;
 
   //Set Temp - Binary 0011 -> 1111 = 18 - 30 Deg (decimal 3 offset in value, starts at 18, possibly cool can be set at 15?)
   bitWrite(tempByte,0, bitRead(charBuff[6],0));
@@ -272,28 +295,44 @@ void publishSettings(){
   bitWrite(zoneByte,2, bitRead(charBuff[5],5)); //Zone 2
   bitWrite(zoneByte,3, bitRead(charBuff[5],6)); //Zone 1
 
-  char strPath1[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'P','\0'};  // Power State
-  char strPath2[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'T','\0'};  //Set Temp
-  char strPath3[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'M','\0'};  //Mode
-  char strPath4[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'Z','\0'};  //Zones
-  char strPath5[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'F','\0'};  //Fan
+ // char strPath1[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'P','\0'};  // Power State
+ // char strPath2[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'T','\0'};  //Set Temp
+ // char strPath3[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'M','\0'};  //Mode
+ // char strPath4[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'Z','\0'};  //Zones
+ // char strPath5[] = {'h', 'a', '/', 'm', 'o', 'd', '/', id[0], id[1], id[2], id[3], '/', 'F','\0'};  //Fan
 
   char tempChar[2] = {powerByte + 48, '\0'};
-  publishTopicValue(strPath1,tempChar);
+  topic = make_topic("P");
+  publishTopicValue(topic, tempChar);
+  free(subPath);
+
+  
+  tempChar[0] = plasmaByte + 48;
+  topic = make_topic("L");
+  publishTopicValue(topic, tempChar);
+  free(topic);
   
   tempChar[0] = modeByte + 48;
-  publishTopicValue(strPath3,tempChar);
+  topic = make_topic("M");
+  publishTopicValue(topic, tempChar);
+  free(topic);
 
   tempChar[0] = fanByte + 48;
-  publishTopicValue(strPath5,tempChar);
-
+  topic = make_topic("F");
+  publishTopicValue(topic, tempChar);
+  free(topic);
+  
   char charStr[5] = {bitRead(zoneByte,3)+48, bitRead(zoneByte,2)+48, bitRead(zoneByte,1)+48, bitRead(zoneByte,0)+48, '\0'};
-  publishTopicValue(strPath4,charStr);
-
+  topic = make_topic("Z");
+  publishTopicValue(topic, charStr);
+  free(topic);
+  
   char tmpChar[3];
   char* myPtr = &tmpChar[0];
   snprintf(myPtr, 3, "%02u", tempByte+15);
-  publishTopicValue(strPath2,tmpChar);
+  topic = make_topic("T");
+  publishTopicValue(topic, tmpChar);
+  free(topic);
   lastChecksum = charBuff[12];
 }
 
@@ -391,8 +430,8 @@ void loop() {
      lastCharTime=millis();
      charBuff[charCount] = swSer.read();
      charCount++;
-	   Serial.print("Have bytes.");
-	   Serial.print(charCount);
+//	   Serial.print("Have bytes. ");
+//	   Serial.println(charCount);
      if (charCount == 13){
        Serial.print("R: ");
        for (int i=0; i < 12; i++){
